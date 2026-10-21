@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: postgres
+    restart: always
+    env_file: ./.env
+    networks: [appnet]
+    volumes:
+      - ./database/pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mosquitto:
+    image: eclipse-mosquitto
+    container_name: mosquitto
+    restart: always
+    networks: [appnet]
+    ports:
+      - "1883:1883"
+      - "8883:8883"
+    volumes:
+      - ./broker/config:/mosquitto/config
+      - ./broker/data:/mosquitto/data
+      - ./broker/log:/mosquitto/log
+      - ./broker/certs:/mosquitto/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883 || nc -z 127.0.0.1 8883"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mqtt-pg-client:
+    build: ./client
+    image: mqtt-pg-client
+    container_name: mqtt-pg-client
+    restart: always
+    networks: [appnet]
+    env_file: ./.env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=8883
+      - MQTT_CA_CERT=/certs/ca.crt
+      - WAIT_TIMEOUT=120
+      - WAIT_INTERVAL=2
+    volumes:
+      - ./broker/certs/ca.crt:/certs/ca.crt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+
+networks:
+  appnet:
+    name: appnet
+    driver: bridge
