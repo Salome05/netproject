@@ -1,102 +1,160 @@
 import os
 import json
+import ssl
+import time
+
 import psycopg2
 import paho.mqtt.client as mqtt
 
-# --- Config from env ---
-MQTT_HOST = os.environ["MQTT_HOST"]
-MQTT_PORT = int(os.environ["MQTT_PORT"])
-MQTT_USER = os.environ["MQTT_USER"]
-MQTT_PASSWORD = os.environ["MQTT_PASSWORD"]
-MQTT_TOPIC = os.environ["MQTT_TOPIC"]
 
-PG_HOST = os.environ["POSTGRES_HOST"]
-PG_PORT = os.environ.get("POSTGRES_PORT", "5432")
-PG_DB = os.environ["POSTGRES_DB"]
-PG_USER = os.environ["POSTGRES_USER"]
-PG_PASSWORD = os.environ["POSTGRES_PASSWORD"]
+# =========================
+# MQTT CONFIGURATION
+# =========================
 
+MQTT_HOST = os.environ.get("MQTT_HOST", "mosquitto")
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
+MQTT_USER = os.environ.get("MQTT_USER", "salome")
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "salome")
+MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "sensors/temp")
 
-def table_name_for_topic(topic: str) -> str:
-    return topic.strip("/").replace("/", "_")
-
-
-def ensure_table(cur, table: str):
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS "{table}" (
-            id SERIAL PRIMARY KEY,
-            temp DOUBLE PRECISION,
-            received_at TIMESTAMPTZ DEFAULT NOW()
-        )
-    """)
+MQTT_CA_CERT = os.environ.get(
+    "MQTT_CA_CERT",
+    "/certs/ca.crt"
+)
 
 
-def insert_reading(cur, table: str, payload: dict):
-    cur.execute(
-        f'INSERT INTO "{table}" (temp) VALUES (%s)',
-        (payload.get("temp"),)
-    )
+# =========================
+# POSTGRES CONFIGURATION
+# =========================
+
+POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "postgres")
+POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
+POSTGRES_DB = os.environ.get("POSTGRES_DB", "BD1")
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "salome")
+POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
 
 
-def on_connect(client, userdata, flags, rc, properties=None):
-    print(f"[mqtt] connected rc={rc}, subscribing to {MQTT_TOPIC}")
+# =========================
+# MQTT CALLBACKS
+# =========================
+
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    print(f"[mqtt] connected rc={reason_code}")
+
     client.subscribe(MQTT_TOPIC)
+
+    print(f"[mqtt] subscribed to {MQTT_TOPIC}")
 
 
 def on_message(client, userdata, msg):
-    topic = msg.topic
-    table = table_name_for_topic(topic)
-
     try:
         payload = json.loads(msg.payload.decode())
+
+        print(f"[mqtt] {msg.topic} -> {payload}")
+
     except json.JSONDecodeError:
-        print(f"[warn] non-JSON payload on {topic}: {msg.payload!r}")
+        print("[mqtt error] invalid JSON")
         return
 
-    print(f"[mqtt] {topic} -> {payload}")
+    table_name = msg.topic.strip("/").replace("/", "_")
 
     try:
         conn = psycopg2.connect(
-            host=PG_HOST,
-            port=PG_PORT,
-            dbname=PG_DB,
-            user=PG_USER,
-            password=PG_PASSWORD
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            dbname=POSTGRES_DB,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD
         )
 
         conn.autocommit = True
 
-        with conn:
-            with conn.cursor() as cur:
-                ensure_table(cur, table)
-                insert_reading(cur, table, payload)
+        cur = conn.cursor()
 
-        print(f"[db] stored in table '{table}'")
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS "{table_name}" (
+                id SERIAL PRIMARY KEY,
+                temp DOUBLE PRECISION,
+                received_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            """
+        )
+
+        cur.execute(
+            f"""
+            INSERT INTO "{table_name}" (temp)
+            VALUES (%s);
+            """,
+            (
+                payload.get("temp"),
+            )
+        )
+
+        print(
+            f"[db] inserted into {table_name}: "
+            f"{payload.get('temp')}"
+        )
+
+        cur.close()
+        conn.close()
 
     except Exception as e:
         print(f"[db error] {e}")
 
 
+# =========================
+# MAIN
+# =========================
+
 def main():
+
     client = mqtt.Client(
         client_id="pg-client",
         protocol=mqtt.MQTTv5
     )
 
-    client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+    client.username_pw_set(
+        MQTT_USER,
+        MQTT_PASSWORD
+    )
+
+    # TLS configuration
+    client.tls_set(
+        ca_certs=MQTT_CA_CERT,
+        cert_reqs=ssl.CERT_REQUIRED,
+        tls_version=ssl.PROTOCOL_TLS_CLIENT,
+    )
 
     client.on_connect = on_connect
     client.on_message = on_message
 
     while True:
+
         try:
-            client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
-            client.loop_forever(retry_first_connection=True)
+
+            print(
+                f"[mqtt] connecting to "
+                f"{MQTT_HOST}:{MQTT_PORT} using TLS"
+            )
+
+            client.connect(
+                MQTT_HOST,
+                MQTT_PORT,
+                keepalive=60
+            )
+
+            client.loop_forever(
+                retry_first_connection=True
+            )
 
         except Exception as e:
-            print(f"[connect error] {e}, retrying in 5s...")
 
-            import time
+            print(
+                f"[connect error] {e}, "
+                f"retrying in 5s..."
+            )
+
             time.sleep(5)
 
 
