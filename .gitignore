@@ -3,3 +3,4 @@ broker/config/passwd
 broker/data/mosquitto.db
 database/pgdata/
 broker/certs/
+*.key
