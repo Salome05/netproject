@@ -1,4 +1,5 @@
-import os
+MQTT_USER = os.environ.get("MQTT_USER")
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD")import os
 import json
 import ssl
 import time
@@ -28,8 +29,8 @@ MQTT_CA_CERT = os.environ.get(
 # =========================
 
 POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "postgres")
-POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
-POSTGRES_DB = os.environ.get("POSTGRES_DB", "BD1")
+POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT")
+POSTGRES_DB = os.environ.get("POSTGRES_DB")
 POSTGRES_USER = os.environ.get("POSTGRES_USER")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
 
