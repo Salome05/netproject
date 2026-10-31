@@ -1,7 +1,6 @@
 .env
 
 mosquitto/config/passwd
-
 mosquitto/certs/*.key
 mosquitto/certs/*.pem
 mosquitto/certs/*.p12
@@ -13,7 +12,6 @@ mosquitto/data/
 mosquitto/log/
 
 influxdb/data/
-
 grafana/data/
 
 __pycache__/
